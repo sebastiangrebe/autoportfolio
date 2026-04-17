@@ -1,0 +1,22 @@
+# CSV data files (keep templates)
+data/*.csv
+!data/*_template.csv
+
+# OS
+.DS_Store
+
+# Editor
+*.swp
+*.swo
+*~
+
+# Portfolio state and memory (contains personal financial data)
+portfolio_memory.json
+data/portfolio_state.json
+data/dashboard.html
+data/sessions.jsonl
+
+# Environment
+.env
+.env.local
+.claude/skills/autoportfolio/tools/__pycache__
