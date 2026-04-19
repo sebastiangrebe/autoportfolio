@@ -19,4 +19,4 @@ data/sessions.jsonl
 # Environment
 .env
 .env.local
-plugin/skills/autoportfolio/tools/__pycache__
+plugin/bin/__pycache__

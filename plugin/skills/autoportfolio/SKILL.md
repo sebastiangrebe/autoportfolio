@@ -2,7 +2,7 @@
 name: autoportfolio
 description: Stateful portfolio manager — validates user tickers, discovers new picks via web research, tracks budget/holdings/P&L, generates an HTML dashboard. Growth + Dividend Barbell with tax-aware UCITS selection.
 user_invocable: true
-allowed-tools: Bash(python *) Bash(cat *) Bash(mkdir *) Bash(open *) WebSearch Read AskUserQuestion
+allowed-tools: Bash(fetch_data.py *) Bash(execute_trade.py *) Bash(generate_dashboard.py *) Bash(cat *) Bash(mkdir *) Bash(open *) WebSearch Read AskUserQuestion
 argument-hint: "[tickers or 'research mode' or 'monitor']"
 ---
 
@@ -30,15 +30,15 @@ You manage real budgets, track holdings with timestamps, evaluate user-provided 
 
 ## Tools at your disposal
 
-Three Python scripts executed via Bash. `$CLAUDE_PLUGIN_ROOT` is set by Claude Code to this plugin's installed path:
+Three Python scripts. They live in the plugin's `bin/` directory which Claude Code adds to `PATH` automatically, so call them by bare name:
 
-- **Fetch data**: `python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/fetch_data.py" TICKER1 TICKER2 ...`
+- **Fetch data**: `fetch_data.py TICKER1 TICKER2 ...`
   Returns JSON with `name`, `currency`, `price` (USD), `price_native`, `ma_50`/`ma_200` (USD), `ma_*_native`, `rsi_14`, `dividend_yield_pct` (normalized 0–30%), `momentum_5d_pct`, `sector`, `market_cap`, `fx_rate_to_usd`. All monetary reasoning should use the USD fields; native is for context only.
 
-- **Search tickers**: `python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/fetch_data.py" --search "query" --limit 10`
+- **Search tickers**: `fetch_data.py --search "query" --limit 10`
   Searches for tickers matching a natural language query.
 
-- **Execute trade**: `python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/execute_trade.py" '<json>'`
+- **Execute trade**: `execute_trade.py '<json>'`
   One script for cash management, trades, imports, snapshots, and undo. Payload keys (all optional, processed in order):
   ```json
   {
@@ -70,7 +70,7 @@ Three Python scripts executed via Bash. `$CLAUDE_PLUGIN_ROOT` is set by Claude C
   ```
   Ledger actions: `BUY`, `SELL`, `DEPOSIT`, `SET_BUDGET`, `ADJUST`, `IMPORT`. Timestamps on holdings (`first_buy`, `last_buy`) are full ISO-8601 UTC — the cooldown rule compares timestamps, not dates.
 
-- **Generate dashboard**: `python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/generate_dashboard.py" --open`
+- **Generate dashboard**: `generate_dashboard.py --open`
   Builds `data/dashboard.html` (uses latest snapshot's market values when present; falls back to cost basis).
 
 ## Execution flow
@@ -257,16 +257,16 @@ Run execute_trade.py via Bash.
 
 Then snapshot the portfolio value. First fetch current prices for all holdings:
 ```
-python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/fetch_data.py" TICKER1 TICKER2 ...
+fetch_data.py TICKER1 TICKER2 ...
 ```
 Then run:
 ```
-python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/execute_trade.py" '{"snapshot_value": true, "holdings_values": {"TICKER": current_price, ...}, "trades": []}'
+execute_trade.py '{"snapshot_value": true, "holdings_values": {"TICKER": current_price, ...}, "trades": []}'
 ```
 
 Finally, generate and open the dashboard:
 ```
-python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/generate_dashboard.py" --open
+generate_dashboard.py --open
 ```
 
 Display a confirmation summary with trade receipts, updated cash, and updated holdings.
@@ -363,10 +363,10 @@ In interactive mode, users can manage their watchlist via execute_trade.py:
 
 ```bash
 # Add to watchlist
-python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/execute_trade.py" '{"watchlist_add": {"ticker": "ASML", "condition": "RSI below 60"}}'
+execute_trade.py '{"watchlist_add": {"ticker": "ASML", "condition": "RSI below 60"}}'
 
 # Remove from watchlist
-python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/execute_trade.py" '{"watchlist_remove": {"ticker": "ASML"}}'
+execute_trade.py '{"watchlist_remove": {"ticker": "ASML"}}'
 ```
 
 During interactive sessions, you can also offer to add tickers to the watchlist when a verdict is HOLD/WATCHLIST.

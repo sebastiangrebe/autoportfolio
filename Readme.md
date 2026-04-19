@@ -40,7 +40,7 @@ autoportfolio manages real money decisions: it validates tickers, discovers new 
 │          ├── Generates report + updates dashboard            │
 │          └── Logs session to sessions.jsonl                  │
 │                                                              │
-│  tools/                                                      │
+│  bin/ (added to PATH while plugin is enabled)                │
 │    ├── fetch_data.py          (live prices + ticker search)  │
 │    ├── execute_trade.py       (trades, imports, watchlist)   │
 │    └── generate_dashboard.py  (HTML dashboard builder)       │
@@ -59,9 +59,9 @@ The Python scripts are intentionally simple — they fetch data, manage JSON sta
 | File | Path | Purpose |
 |------|------|---------|
 | SKILL.md | `plugin/skills/autoportfolio/SKILL.md` | Skill definition and LLM instructions |
-| fetch_data.py | `plugin/skills/autoportfolio/tools/fetch_data.py` | Fetch live technicals + ticker search |
-| execute_trade.py | `plugin/skills/autoportfolio/tools/execute_trade.py` | Execute trades, manage budget, snapshot values |
-| generate_dashboard.py | `plugin/skills/autoportfolio/tools/generate_dashboard.py` | Build HTML dashboard |
+| fetch_data.py | `plugin/bin/fetch_data.py` | Fetch live technicals + ticker search |
+| execute_trade.py | `plugin/bin/execute_trade.py` | Execute trades, manage budget, snapshot values |
+| generate_dashboard.py | `plugin/bin/generate_dashboard.py` | Build HTML dashboard |
 | Portfolio state | `data/portfolio_state.json` | Budget, holdings, ledger, value history (gitignored) |
 | Dashboard | `data/dashboard.html` | Visual portfolio overview (gitignored) |
 
@@ -82,13 +82,13 @@ Inside Claude Code, run:
 git clone https://github.com/sebastiangrebe/autoportfolio.git
 ```
 
-Then copy the skill into your personal Claude Code skills directory:
+Then load the plugin directly from the clone:
 
 ```bash
-cp -r autoportfolio/plugin/skills/autoportfolio ~/.claude/skills/autoportfolio
+claude --plugin-dir ./autoportfolio/plugin
 ```
 
-Note: when installed this way, `$CLAUDE_PLUGIN_ROOT` is not set. Edit the copied `SKILL.md` and replace `$CLAUDE_PLUGIN_ROOT` with `$HOME/.claude` so the tool paths resolve. Option A (marketplace) handles this automatically.
+This loads the plugin for the current session without installing it globally. The `bin/` directory is added to `PATH` so `fetch_data.py`, `execute_trade.py`, and `generate_dashboard.py` are callable by name.
 
 ### Prerequisite
 
@@ -151,7 +151,7 @@ After each session, an HTML dashboard is generated at `data/dashboard.html` with
 You can backfill positions held in other brokers without debiting cash:
 
 ```bash
-python3 plugin/skills/autoportfolio/tools/execute_trade.py '{
+plugin/bin/execute_trade.py '{
   "import_position": {
     "ticker": "DTE.DE",
     "shares": 154,
@@ -225,10 +225,10 @@ Add tickers to your watchlist with conditions. Monitor mode checks these automat
 
 ```bash
 # Add
-python3 plugin/skills/autoportfolio/tools/execute_trade.py '{"watchlist_add": {"ticker": "ASML", "condition": "RSI below 60"}}'
+plugin/bin/execute_trade.py '{"watchlist_add": {"ticker": "ASML", "condition": "RSI below 60"}}'
 
 # Remove
-python3 plugin/skills/autoportfolio/tools/execute_trade.py '{"watchlist_remove": {"ticker": "ASML"}}'
+plugin/bin/execute_trade.py '{"watchlist_remove": {"ticker": "ASML"}}'
 ```
 
 Supported conditions (evaluated by the LLM during monitoring):

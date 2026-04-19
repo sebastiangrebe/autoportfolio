@@ -1,6 +1,6 @@
 {
   "name": "autoportfolio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Stateful portfolio manager — validates user tickers, discovers new picks via web research, tracks budget/holdings/P&L, generates an HTML dashboard. Growth + Dividend Barbell with tax-aware UCITS selection.",
   "author": {
     "name": "Sebastian Grebe"
