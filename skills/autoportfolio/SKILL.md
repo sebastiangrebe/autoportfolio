@@ -30,15 +30,15 @@ You manage real budgets, track holdings with timestamps, evaluate user-provided 
 
 ## Tools at your disposal
 
-Three Python scripts executed via Bash (paths relative to project root):
+Three Python scripts executed via Bash. `$CLAUDE_PLUGIN_ROOT` is set by Claude Code to this plugin's installed path:
 
-- **Fetch data**: `python .claude/skills/autoportfolio/tools/fetch_data.py TICKER1 TICKER2 ...`
+- **Fetch data**: `python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/fetch_data.py" TICKER1 TICKER2 ...`
   Returns JSON with `name`, `currency`, `price` (USD), `price_native`, `ma_50`/`ma_200` (USD), `ma_*_native`, `rsi_14`, `dividend_yield_pct` (normalized 0–30%), `momentum_5d_pct`, `sector`, `market_cap`, `fx_rate_to_usd`. All monetary reasoning should use the USD fields; native is for context only.
 
-- **Search tickers**: `python .claude/skills/autoportfolio/tools/fetch_data.py --search "query" --limit 10`
+- **Search tickers**: `python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/fetch_data.py" --search "query" --limit 10`
   Searches for tickers matching a natural language query.
 
-- **Execute trade**: `python .claude/skills/autoportfolio/tools/execute_trade.py '<json>'`
+- **Execute trade**: `python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/execute_trade.py" '<json>'`
   One script for cash management, trades, imports, snapshots, and undo. Payload keys (all optional, processed in order):
   ```json
   {
@@ -70,7 +70,7 @@ Three Python scripts executed via Bash (paths relative to project root):
   ```
   Ledger actions: `BUY`, `SELL`, `DEPOSIT`, `SET_BUDGET`, `ADJUST`, `IMPORT`. Timestamps on holdings (`first_buy`, `last_buy`) are full ISO-8601 UTC — the cooldown rule compares timestamps, not dates.
 
-- **Generate dashboard**: `python .claude/skills/autoportfolio/tools/generate_dashboard.py --open`
+- **Generate dashboard**: `python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/generate_dashboard.py" --open`
   Builds `data/dashboard.html` (uses latest snapshot's market values when present; falls back to cost basis).
 
 ## Execution flow
@@ -257,16 +257,16 @@ Run execute_trade.py via Bash.
 
 Then snapshot the portfolio value. First fetch current prices for all holdings:
 ```
-python .claude/skills/autoportfolio/tools/fetch_data.py TICKER1 TICKER2 ...
+python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/fetch_data.py" TICKER1 TICKER2 ...
 ```
 Then run:
 ```
-python .claude/skills/autoportfolio/tools/execute_trade.py '{"snapshot_value": true, "holdings_values": {"TICKER": current_price, ...}, "trades": []}'
+python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/execute_trade.py" '{"snapshot_value": true, "holdings_values": {"TICKER": current_price, ...}, "trades": []}'
 ```
 
 Finally, generate and open the dashboard:
 ```
-python .claude/skills/autoportfolio/tools/generate_dashboard.py --open
+python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/generate_dashboard.py" --open
 ```
 
 Display a confirmation summary with trade receipts, updated cash, and updated holdings.
@@ -363,10 +363,10 @@ In interactive mode, users can manage their watchlist via execute_trade.py:
 
 ```bash
 # Add to watchlist
-python .claude/skills/autoportfolio/tools/execute_trade.py '{"watchlist_add": {"ticker": "ASML", "condition": "RSI below 60"}}'
+python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/execute_trade.py" '{"watchlist_add": {"ticker": "ASML", "condition": "RSI below 60"}}'
 
 # Remove from watchlist
-python .claude/skills/autoportfolio/tools/execute_trade.py '{"watchlist_remove": {"ticker": "ASML"}}'
+python "$CLAUDE_PLUGIN_ROOT/skills/autoportfolio/tools/execute_trade.py" '{"watchlist_remove": {"ticker": "ASML"}}'
 ```
 
 During interactive sessions, you can also offer to add tickers to the watchlist when a verdict is HOLD/WATCHLIST.

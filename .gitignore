@@ -19,4 +19,4 @@ data/sessions.jsonl
 # Environment
 .env
 .env.local
-.claude/skills/autoportfolio/tools/__pycache__
+skills/autoportfolio/tools/__pycache__

@@ -1,0 +1,21 @@
+{
+  "name": "autoportfolio",
+  "owner": {
+    "name": "Sebastian Grebe"
+  },
+  "metadata": {
+    "description": "AI-driven portfolio research skill for Claude Code. Growth + Dividend Barbell strategy with tax-aware UCITS selection.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "autoportfolio",
+      "source": ".",
+      "description": "Stateful portfolio manager — validates user tickers, discovers new picks via web research, tracks budget/holdings/P&L, generates an HTML dashboard. Growth + Dividend Barbell with tax-aware UCITS selection.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Sebastian Grebe"
+      }
+    }
+  ]
+}
