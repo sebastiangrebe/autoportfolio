@@ -58,10 +58,10 @@ The Python scripts are intentionally simple — they fetch data, manage JSON sta
 
 | File | Path | Purpose |
 |------|------|---------|
-| SKILL.md | `skills/autoportfolio/SKILL.md` | Skill definition and LLM instructions |
-| fetch_data.py | `skills/autoportfolio/tools/fetch_data.py` | Fetch live technicals + ticker search |
-| execute_trade.py | `skills/autoportfolio/tools/execute_trade.py` | Execute trades, manage budget, snapshot values |
-| generate_dashboard.py | `skills/autoportfolio/tools/generate_dashboard.py` | Build HTML dashboard |
+| SKILL.md | `plugin/skills/autoportfolio/SKILL.md` | Skill definition and LLM instructions |
+| fetch_data.py | `plugin/skills/autoportfolio/tools/fetch_data.py` | Fetch live technicals + ticker search |
+| execute_trade.py | `plugin/skills/autoportfolio/tools/execute_trade.py` | Execute trades, manage budget, snapshot values |
+| generate_dashboard.py | `plugin/skills/autoportfolio/tools/generate_dashboard.py` | Build HTML dashboard |
 | Portfolio state | `data/portfolio_state.json` | Budget, holdings, ledger, value history (gitignored) |
 | Dashboard | `data/dashboard.html` | Visual portfolio overview (gitignored) |
 
@@ -85,7 +85,7 @@ git clone https://github.com/sebastiangrebe/autoportfolio.git
 Then copy the skill into your personal Claude Code skills directory:
 
 ```bash
-cp -r autoportfolio/skills/autoportfolio ~/.claude/skills/autoportfolio
+cp -r autoportfolio/plugin/skills/autoportfolio ~/.claude/skills/autoportfolio
 ```
 
 Note: when installed this way, `$CLAUDE_PLUGIN_ROOT` is not set. Edit the copied `SKILL.md` and replace `$CLAUDE_PLUGIN_ROOT` with `$HOME/.claude` so the tool paths resolve. Option A (marketplace) handles this automatically.
@@ -151,7 +151,7 @@ After each session, an HTML dashboard is generated at `data/dashboard.html` with
 You can backfill positions held in other brokers without debiting cash:
 
 ```bash
-python3 skills/autoportfolio/tools/execute_trade.py '{
+python3 plugin/skills/autoportfolio/tools/execute_trade.py '{
   "import_position": {
     "ticker": "DTE.DE",
     "shares": 154,
@@ -225,10 +225,10 @@ Add tickers to your watchlist with conditions. Monitor mode checks these automat
 
 ```bash
 # Add
-python3 skills/autoportfolio/tools/execute_trade.py '{"watchlist_add": {"ticker": "ASML", "condition": "RSI below 60"}}'
+python3 plugin/skills/autoportfolio/tools/execute_trade.py '{"watchlist_add": {"ticker": "ASML", "condition": "RSI below 60"}}'
 
 # Remove
-python3 skills/autoportfolio/tools/execute_trade.py '{"watchlist_remove": {"ticker": "ASML"}}'
+python3 plugin/skills/autoportfolio/tools/execute_trade.py '{"watchlist_remove": {"ticker": "ASML"}}'
 ```
 
 Supported conditions (evaluated by the LLM during monitoring):

@@ -10,10 +10,7 @@
   "plugins": [
     {
       "name": "autoportfolio",
-      "source": {
-        "source": "github",
-        "repo": "sebastiangrebe/autoportfolio"
-      },
+      "source": "./plugin",
       "description": "Stateful portfolio manager — validates user tickers, discovers new picks via web research, tracks budget/holdings/P&L, generates an HTML dashboard. Growth + Dividend Barbell with tax-aware UCITS selection.",
       "version": "1.0.0",
       "author": {
