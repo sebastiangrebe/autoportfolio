@@ -407,7 +407,11 @@ def main():
         op_adjust_cash(state, adj["amount"], adj.get("reason", ""))
 
     if "recurring_income" in payload and payload["recurring_income"]:
-        state["recurring_income"] = payload["recurring_income"]
+        cfg = dict(payload["recurring_income"])
+        if "started_at" not in cfg:
+            existing = state.get("recurring_income") or {}
+            cfg["started_at"] = existing.get("started_at") or utcnow_iso()
+        state["recurring_income"] = cfg
 
     if "dividend_income_target" in payload and payload["dividend_income_target"]:
         state["dividend_income_target"] = payload["dividend_income_target"]
