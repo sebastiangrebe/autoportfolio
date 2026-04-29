@@ -98,6 +98,7 @@ If the file exists, report the current state to the user:
 - Current holdings with share counts, avg cost, and dates
 - Total portfolio value (cash + holdings at cost)
 - Flag any holdings with a `last_buy` within the last 7 days (cooldown — cannot re-buy)
+- **Contribution reconciliation**: if `recurring_income` exists with `started_at`, compute `cycles_elapsed = months between started_at and today`, `expected = cycles × amount`, `actual = sum of DEPOSIT ledger entries since started_at`. If `delta = expected − actual > 0`, report: "Contributions: $actual / $expected over N cycles — you're $delta behind."
 
 ### Step 2 — Gather input
 
@@ -208,7 +209,7 @@ From ALL analyzed tickers (user-provided + discovered), select up to:
 
 **Budget constraint:** Total cost of all BUY recommendations must not exceed `available_cash`. Position size = 5% of available_cash per pick, rounded down to whole shares. Skip if 0 shares.
 
-If the user has `recurring_income` configured, mention how many cycles until the next meaningful deployment if cash is low.
+If the user has `recurring_income` configured and the contribution reconciliation from Step 1 shows `delta ≥ amount` (at least one cycle behind), include a "Log $delta catch-up deposit" option in the Step 5 approval prompt. Approving it adds a `deposit` field to the same `execute_trade.py` payload as the trades — re-uses the existing DEPOSIT flow, no new mechanism.
 
 #### Tax-aware UCITS substitution (CRITICAL for non-US residents)
 
@@ -243,7 +244,7 @@ Display a comprehensive plan:
 - Ticker, shares, price, total cost, rationale
 - Projected cash after all trades
 
-Then use `AskUserQuestion` with question: "Do you approve this plan?" and suggestions: ["Yes, execute all trades", "No, cancel session", "Modify — only do the sells", "Modify — skip the dividend buy", "Modify — let me specify changes"].
+Then use `AskUserQuestion` with question: "Do you approve this plan?" and suggestions: ["Yes, execute all trades", "No, cancel session", "Modify — only do the sells", "Modify — skip the dividend buy", "Modify — let me specify changes"]. If contributions are behind by ≥1 cycle, also offer "Yes + log $delta catch-up deposit".
 
 - **Yes**: proceed to Step 6
 - **No**: end the session

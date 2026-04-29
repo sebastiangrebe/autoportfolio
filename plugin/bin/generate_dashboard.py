@@ -10,9 +10,10 @@ Pass --open to automatically open the file in the default browser.
 """
 
 import json
+import math
 import sys
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 STATE_FILE = Path("data/portfolio_state.json")
@@ -148,6 +149,112 @@ def build_value_chart_data(value_history):
     return json.dumps(points)
 
 
+def _project_time_to_goal(target, monthly_income, holdings, snap_positions, recurring, strategy):
+    """Compounded reinvestment timeline to dividend_income_target."""
+    if not target or not target.get("amount") or not recurring or not recurring.get("amount"):
+        return "Set recurring contribution + dividend target to project timeline"
+
+    freq = target.get("frequency", "monthly")
+    m_target = target["amount"] / 12 if freq == "annual" else target["amount"]
+
+    if monthly_income >= m_target:
+        return "🎯 Target reached"
+
+    div_value_total = 0.0
+    div_yield_weighted = 0.0
+    for t, h in holdings.items():
+        if h.get("type") == "dividend" and h.get("dividend_yield_pct"):
+            val = snap_positions.get(t, {}).get("value") or (h["shares"] * h["avg_cost"])
+            div_value_total += val
+            div_yield_weighted += val * h["dividend_yield_pct"]
+    avg_yield = (div_yield_weighted / div_value_total) if div_value_total else 0
+
+    split = (strategy.get("growth_dividend_split") or "").strip()
+    div_share = 1.0
+    if "/" in split:
+        try:
+            div_share = float(split.split("/")[1]) / 100
+        except (ValueError, IndexError):
+            div_share = 1.0
+    contrib = recurring["amount"] * div_share
+
+    if avg_yield <= 0 or contrib <= 0:
+        return "Set recurring contribution + dividend split to project timeline"
+
+    r = (avg_yield / 100) / 12
+    p_now = monthly_income * 12 / (avg_yield / 100)
+    p_target = m_target * 12 / (avg_yield / 100)
+    try:
+        ratio = (p_target + contrib / r) / (p_now + contrib / r)
+        if ratio <= 0 or (1 + r) <= 0:
+            return "Cannot project — check inputs"
+        n_months = math.log(ratio) / math.log(1 + r)
+    except (ValueError, ZeroDivisionError):
+        return "Cannot project — check inputs"
+
+    if not math.isfinite(n_months) or n_months <= 0:
+        return "Cannot project — check inputs"
+
+    years = n_months / 12
+    return (f"~{years:.1f} yr to ${m_target:,.0f}/mo @ {avg_yield:.1f}% yield, "
+            f"${contrib:,.0f}/mo to div bucket")
+
+
+def _months_between(start_iso, now_dt):
+    """Whole monthly cycles elapsed from start_iso to now_dt (UTC)."""
+    try:
+        start_dt = datetime.strptime(start_iso[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return 0
+    months = (now_dt.year - start_dt.year) * 12 + (now_dt.month - start_dt.month)
+    if now_dt.day < start_dt.day:
+        months -= 1
+    return max(0, months)
+
+
+def _build_contribution_card(state, recurring, ledger):
+    """Reconciliation card. Lazy-fills started_at if missing (writes state back)."""
+    if not recurring or not recurring.get("amount"):
+        return ""
+
+    if not recurring.get("started_at"):
+        recurring["started_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        state["recurring_income"] = recurring
+        STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+
+    started_at = recurring["started_at"]
+    freq = recurring.get("frequency", "monthly")
+    amount = recurring["amount"]
+
+    months_elapsed = _months_between(started_at, datetime.now(timezone.utc))
+    cycles_elapsed = months_elapsed // 12 if freq == "annual" else months_elapsed
+    expected = round(cycles_elapsed * amount, 2)
+
+    actual = round(sum(
+        e.get("total", 0) for e in ledger
+        if e.get("action") == "DEPOSIT" and e.get("timestamp", "") >= started_at
+    ), 2)
+
+    delta = round(expected - actual, 2)
+    if abs(delta) < 0.01:
+        delta_class = ""
+        sub = f"{cycles_elapsed} cycle{'s' if cycles_elapsed != 1 else ''} tracked — on pace"
+    elif delta > 0:
+        delta_class = "negative"
+        sub = (f"{cycles_elapsed} cycle{'s' if cycles_elapsed != 1 else ''} tracked — "
+               f"behind ${delta:,.0f}")
+    else:
+        delta_class = "positive"
+        sub = (f"{cycles_elapsed} cycle{'s' if cycles_elapsed != 1 else ''} tracked — "
+               f"ahead ${-delta:,.0f}")
+
+    return f"""        <div class="card">
+            <div class="label">Contributions</div>
+            <div class="value {delta_class}">${actual:,.0f} <span style="color:#8b949e;font-size:18px;font-weight:400">/ ${expected:,.0f}</span></div>
+            <div class="sub">{sub}</div>
+        </div>"""
+
+
 def generate_html(state):
     cash = state.get("available_cash", 0)
     holdings = state.get("holdings", {})
@@ -195,6 +302,16 @@ def generate_html(state):
     else:
         income_sub = f"≈ ${monthly_income:,.2f} / month"
 
+    # Compounded time-to-goal projection
+    projection_sub = _project_time_to_goal(
+        target=target,
+        monthly_income=monthly_income,
+        holdings=holdings,
+        snap_positions=snap_positions,
+        recurring=recurring,
+        strategy=state.get("strategy") or {},
+    )
+
     # Net capital in = DEPOSIT + ADJUST amounts, plus the FIRST SET_BUDGET as baseline.
     # Subsequent SET_BUDGETs are corrections: absorb their delta so the baseline tracks
     # true capital-in, not an arbitrary reset.
@@ -218,6 +335,8 @@ def generate_html(state):
     recurring_str = "None configured"
     if recurring:
         recurring_str = f"${recurring['amount']:,.2f} / {recurring['frequency']}"
+
+    contribution_card_html = _build_contribution_card(state, recurring, ledger)
 
     now = datetime.now().strftime("%B %d, %Y at %H:%M")
 
@@ -282,6 +401,7 @@ footer {{ text-align: center; color: #484f58; font-size: 12px; padding: 24px 0; 
             <div class="value">${cash:,.2f}</div>
             <div class="sub">Recurring: {recurring_str}</div>
         </div>
+{contribution_card_html}
         <div class="card">
             <div class="label">Holdings Value</div>
             <div class="value">${holdings_value:,.2f}</div>
@@ -296,6 +416,7 @@ footer {{ text-align: center; color: #484f58; font-size: 12px; padding: 24px 0; 
             <div class="label">Est. Dividend Income</div>
             <div class="value">${annual_income:,.2f}</div>
             <div class="sub">{income_sub}</div>
+            <div class="sub">{projection_sub}</div>
         </div>
     </div>
 
