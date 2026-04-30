@@ -490,12 +490,12 @@ def _render_dividend_goal(scenarios, monthly_income):
 
         <div class="chart-container">
             <h2 style="margin-bottom:16px">Projected Monthly Dividend Income</h2>
-            <canvas id="divGoalChart"></canvas>
+            <div class="chart-canvas-wrap"><canvas id="divGoalChart"></canvas></div>
         </div>
 
         <div class="chart-container">
             <h2 style="margin-bottom:16px">Total Assets Over Time</h2>
-            <canvas id="totalAssetsChart"></canvas>
+            <div class="chart-canvas-wrap"><canvas id="totalAssetsChart"></canvas></div>
             <div class="sub" style="margin-top:12px">
                 Growth assumption {growth_rate_pct:.1f}%/yr (override via <code>strategy.growth_rate_pct</code>).
                 Currency mixing in source values is a known issue — see #2 follow-ups.
@@ -823,7 +823,8 @@ tr:hover {{ background: #1c2129; }}
 .positive {{ color: #3fb950; }}
 .negative {{ color: #f85149; }}
 .chart-container {{ background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 24px; margin-bottom: 32px; }}
-canvas {{ width: 100% !important; height: 300px !important; }}
+.chart-container > canvas {{ display: block; }}
+.chart-canvas-wrap {{ position: relative; height: 300px; width: 100%; }}
 footer {{ text-align: center; color: #484f58; font-size: 12px; padding: 24px 0; border-top: 1px solid #21262d; }}
 </style>
 </head>
@@ -855,7 +856,7 @@ footer {{ text-align: center; color: #484f58; font-size: 12px; padding: 24px 0; 
 
     <div class="chart-container">
         <h2 style="margin-bottom:16px">Portfolio Value Over Time</h2>
-        <canvas id="valueChart"></canvas>
+        <div class="chart-canvas-wrap"><canvas id="valueChart"></canvas></div>
     </div>
 
 {dividend_goal_html}
@@ -903,6 +904,10 @@ footer {{ text-align: center; color: #484f58; font-size: 12px; padding: 24px 0; 
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script>
+Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+Chart.defaults.font.size = 12;
+Chart.defaults.color = '#8b949e';
+Chart.defaults.devicePixelRatio = window.devicePixelRatio || 2;
 const data = {build_value_chart_data(value_history)};
 if (data.length > 0) {{
     const ctx = document.getElementById('valueChart').getContext('2d');
