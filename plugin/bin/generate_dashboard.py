@@ -24,7 +24,31 @@ def load_state():
     if not STATE_FILE.exists():
         print(json.dumps({"error": f"{STATE_FILE} not found"}))
         sys.exit(1)
-    return json.loads(STATE_FILE.read_text())
+    state = json.loads(STATE_FILE.read_text())
+    if _migrate_ledger_deposit_types(state):
+        STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+    return state
+
+
+def _migrate_ledger_deposit_types(state) -> bool:
+    """One-shot migration: tag legacy DEPOSIT entries with `deposit_type`.
+
+    Mirrors execute_trade.migrate_ledger_deposit_types so the dashboard can
+    self-heal even when invoked before any execute_trade call.
+    """
+    ledger = state.get("ledger", [])
+    rec = state.get("recurring_income") or {}
+    started_at = rec.get("started_at", "") or ""
+    changed = False
+    for entry in ledger:
+        if entry.get("action") != "DEPOSIT":
+            continue
+        if "deposit_type" in entry:
+            continue
+        ts = entry.get("timestamp", "") or ""
+        entry["deposit_type"] = "seed" if (started_at and ts < started_at) else "recurring"
+        changed = True
+    return changed
 
 
 def build_holdings_rows(holdings, latest_snap=None):
@@ -230,9 +254,14 @@ def _build_contribution_card(state, recurring, ledger):
     cycles_elapsed = months_elapsed // 12 if freq == "annual" else months_elapsed
     expected = round(cycles_elapsed * amount, 2)
 
+    # Only recurring/catchup contributions count toward the card.
+    # Seed deposits (initial portfolio funding) are excluded so the card
+    # measures contribution discipline, not total cash brought in.
     actual = round(sum(
         e.get("total", 0) for e in ledger
-        if e.get("action") == "DEPOSIT" and e.get("timestamp", "") >= started_at
+        if e.get("action") == "DEPOSIT"
+        and e.get("timestamp", "") >= started_at
+        and e.get("deposit_type", "recurring") != "seed"
     ), 2)
 
     delta = round(expected - actual, 2)

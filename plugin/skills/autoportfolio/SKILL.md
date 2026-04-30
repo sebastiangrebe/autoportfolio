@@ -43,10 +43,18 @@ Three Python scripts. They live in the plugin's `bin/` directory which Claude Co
   ```json
   {
     "set_budget": 10000,                                   // SET available_cash (replace)
-    "deposit": 4000,                                       // ADD to available_cash
+    "deposit": 4000,                                       // ADD to cash, defaults to type=recurring
+    "deposit": {"amount": 98000, "type": "seed"},          // tag explicitly: seed | recurring | catchup
     "adjust_cash": {"amount": -50, "reason": "broker fee"},
 
-    "recurring_income": {"amount": 2000, "frequency": "monthly"},
+    // Log a contribution that is ALREADY inside cash (e.g. funded out of seed):
+    // writes DEPOSIT + offsetting ADJUST atomically. Cash unchanged, card credits.
+    "log_contribution": {"amount": 4000, "type": "catchup",
+                         "timestamp": "2026-03-17",
+                         "rationale": "Mar contribution already inside seed"},
+
+    "recurring_income": {"amount": 2000, "frequency": "monthly",
+                         "started_at": "2026-02-17T00:00:00Z"},  // started_at optional
     "dividend_income_target": {"amount": 10000, "frequency": "monthly"},  // dashboard progress card
 
     "import_position": {                                   // backfill an existing position (no cash debit)
@@ -98,7 +106,7 @@ If the file exists, report the current state to the user:
 - Current holdings with share counts, avg cost, and dates
 - Total portfolio value (cash + holdings at cost)
 - Flag any holdings with a `last_buy` within the last 7 days (cooldown — cannot re-buy)
-- **Contribution reconciliation**: if `recurring_income` exists with `started_at`, compute `cycles_elapsed = months between started_at and today`, `expected = cycles × amount`, `actual = sum of DEPOSIT ledger entries since started_at`. If `delta = expected − actual > 0`, report: "Contributions: $actual / $expected over N cycles — you're $delta behind."
+- **Contribution reconciliation**: if `recurring_income` exists with `started_at`, compute `cycles_elapsed = months between started_at and today`, `expected = cycles × amount`, `actual = sum of DEPOSIT ledger entries since started_at where deposit_type != "seed"`. If `delta = expected − actual > 0`, report: "Contributions: $actual / $expected over N cycles — you're $delta behind." Seed deposits are excluded so the card measures contribution discipline, not total cash brought in. To log a contribution funded out of an earlier seed (no fresh cash), use `log_contribution` — it pairs DEPOSIT + ADJUST atomically.
 
 ### Step 2 — Gather input
 
@@ -113,7 +121,7 @@ Use the `AskUserQuestion` tool for ALL user input in this step. Do NOT just prin
 5. Use `AskUserQuestion` with question: "What is your target monthly dividend income?" and suggestions: ["$1,000/month", "$5,000/month", "$10,000/month", "No target"]
 6. Use `AskUserQuestion` with question: "What sectors do you want to focus on?" and suggestions: ["Technology & AI", "Broad market", "Healthcare & Biotech", "No preference"]
 
-Save the budget and recurring income by running execute_trade.py with `set_budget` and `recurring_income`.
+Save the budget and recurring income by running execute_trade.py. For the initial cash, use `{"deposit": {"amount": <X>, "type": "seed"}}` so the contribution card excludes it. Use `set_budget` only if you need to overwrite cash (rare). Then save `recurring_income` with explicit `started_at` if backdating is desired.
 
 Then save the strategy to portfolio_state.json by running execute_trade.py with `strategy`:
 ```json
