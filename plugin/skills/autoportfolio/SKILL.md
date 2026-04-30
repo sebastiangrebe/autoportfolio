@@ -33,7 +33,7 @@ You manage real budgets, track holdings with timestamps, evaluate user-provided 
 Three Python scripts. They live in the plugin's `bin/` directory which Claude Code adds to `PATH` automatically, so call them by bare name:
 
 - **Fetch data**: `fetch_data.py TICKER1 TICKER2 ...`
-  Returns JSON with `name`, `currency`, `price` (USD), `price_native`, `ma_50`/`ma_200` (USD), `ma_*_native`, `rsi_14`, `dividend_yield_pct` (normalized 0–30%), `momentum_5d_pct`, `sector`, `market_cap`, `fx_rate_to_usd`. All monetary reasoning should use the USD fields; native is for context only.
+  Returns JSON with `name`, `currency`, `price` (reporting-currency, default USD), `price_native`, `ma_50`/`ma_200` (reporting), `ma_*_native`, `rsi_14`, `dividend_yield_pct` (normalized 0–30%), `momentum_5d_pct`, `sector`, `market_cap`, `fx_rate_to_usd`. **Trades and snapshots must pass `price_native` and `fx_rate_to_usd` separately** so cost basis is recorded in native currency and translation gain is decomposed at SELL time. Use `price` for display / momentum reasoning only.
 
 - **Search tickers**: `fetch_data.py --search "query" --limit 10`
   Searches for tickers matching a natural language query.
@@ -58,25 +58,42 @@ Three Python scripts. They live in the plugin's `bin/` directory which Claude Co
     "dividend_income_target": {"amount": 10000, "frequency": "monthly"},  // dashboard progress card
 
     "import_position": {                                   // backfill an existing position (no cash debit)
-      "ticker": "VUAA.L", "shares": 10, "avg_cost": 121.90,
-      "first_buy": "2024-03-15", "currency": "USD"
+      "ticker": "BAS.DE", "shares": 11, "avg_cost_native": 51.93,
+      "currency": "EUR", "fx_rate_at_buy": 1.0764,         // optional; live-fetched if absent
+      "first_buy": "2024-06-01"
     },
 
+    // Trades. price_native is in trade-currency units; fx_rate_at_trade
+    // converts native → reporting. fx_rate_at_trade is optional for non-USD
+    // currencies (live-fetched from yfinance), required if you want to lock
+    // in a historical rate.
     "trades": [
-      {"action": "BUY",  "ticker": "NVDA", "shares": 2, "price": 950.00,
-       "rationale": "...", "currency": "USD"},
-      {"action": "SELL", "ticker": "META", "shares": 5, "price": 520.00, "rationale": "..."}
+      {"action": "BUY", "ticker": "BAS.DE", "shares": 5,
+       "price_native": 64.26, "currency": "EUR", "fx_rate_at_trade": 1.105,
+       "rationale": "..."},
+      {"action": "BUY", "ticker": "NVDA", "shares": 2,
+       "price_native": 950.00, "currency": "USD", "rationale": "..."},
+      {"action": "SELL", "ticker": "META", "shares": 5,
+       "price_native": 520.00, "currency": "USD", "rationale": "..."}
     ],
+
+    // Override / correct a holding flagged as suspicious during migration
+    // (e.g. cost basis stored as USD-equivalent under a non-USD currency tag).
+    "verify_cost_basis": {
+      "ticker": "JEQP.L", "actual_currency": "USD",
+      "actual_avg_cost_native": 26.29, "fx_rate_at_buy": 1.0
+    },
 
     "snapshot_value": true,                                // capture valuation
     "snapshot_mode": "daily",                              // "daily" (default), "latest-only", or "keep-history"
-    "holdings_values": {"NVDA": 955.00},
+    "holdings_values": {"NVDA": 955.00, "BAS.DE": 64.26},  // NATIVE prices per ticker
+    "fx_rates": {"EUR": 1.105, "GBP": 1.276},              // native→reporting rates; live-fetched if absent
 
     "undo_last": true,                                     // reverse the most recent ledger entry
-    "edit_trade": {"index": 3, "fields": {"price": 120.00}} // rewrite a row and recompute cash_after chain
+    "edit_trade": {"index": 3, "fields": {"price_native": 120.00}} // recomputes total_native + total_reporting + cash chain
   }
   ```
-  Ledger actions: `BUY`, `SELL`, `DEPOSIT`, `SET_BUDGET`, `ADJUST`, `IMPORT`. Timestamps on holdings (`first_buy`, `last_buy`) are full ISO-8601 UTC — the cooldown rule compares timestamps, not dates.
+  Ledger actions: `BUY`, `SELL`, `DEPOSIT`, `SET_BUDGET`, `ADJUST`, `IMPORT`. Timestamps on holdings (`first_buy`, `last_buy`) are full ISO-8601 UTC — the cooldown rule compares timestamps, not dates. The state file uses `schema_version: 2` (multi-currency); legacy v1 fields (`avg_cost`, `price`, `total`) are kept as aliases for one release.
 
 - **Generate dashboard**: `generate_dashboard.py --open`
   Builds `data/dashboard.html` (uses latest snapshot's market values when present; falls back to cost basis).
@@ -90,14 +107,16 @@ Follow these steps in order. Do NOT skip any step.
 Run `mkdir -p data && cat data/portfolio_state.json 2>/dev/null || echo '{}'` to read the current state.
 
 The state file contains:
-- `available_cash` — current deployable budget
-- `recurring_income` — expected periodic income (amount + frequency)
-- `strategy` — investment strategy config (approach, tax_residency, risk_tolerance, sectors, split)
-- `dividend_income_target` — target passive income goal
-- `holdings` — map of tickers to `{shares, avg_cost, first_buy, last_buy, currency, type, dividend_yield_pct}`
+- `schema_version` — `2` for the multi-currency schema; older files self-migrate on first load
+- `reporting_currency` — unit of `available_cash` and dashboard P&L (default `"USD"`)
+- `available_cash` — current deployable budget in reporting currency
+- `recurring_income` — expected periodic income (amount + frequency in reporting currency)
+- `strategy` — investment strategy config (approach, tax_residency, risk_tolerance, sectors, split, optional `growth_rate_pct`)
+- `dividend_income_target` — target passive income goal in reporting currency
+- `holdings` — map of tickers to `{shares, currency, avg_cost_native, fx_rate_at_buy, first_buy, last_buy, type, dividend_yield_pct, cost_basis_verified, migration_approx, tag_suspicious?}`. `avg_cost` is kept as a legacy alias of `avg_cost_native`.
 - `watchlist` — array of `{ticker, condition, added}` entries to monitor
-- `ledger` — timestamped history of all trades and deposits
-- `value_history` — portfolio value snapshots over time
+- `ledger` — timestamped history of all trades and deposits. BUY/SELL/IMPORT entries carry `price_native`, `fx_rate_at_trade`, `total_native`, `total_reporting`. SELL adds `pnl_native`, `pnl_reporting`, `pnl_fx`.
+- `value_history` — portfolio value snapshots over time. v2 snapshots have `schema: "v2"` and per-position `price_native`, `fx_rate_at_snapshot`, `value_native`, `value_reporting`, `pnl_native`, `pnl_reporting`, `pnl_fx`.
 
 If the file is empty or missing, this is a new portfolio — proceed to Step 2 for setup.
 
@@ -268,10 +287,15 @@ Then snapshot the portfolio value. First fetch current prices for all holdings:
 ```
 fetch_data.py TICKER1 TICKER2 ...
 ```
-Then run:
+For each ticker, take its `price_native` (price in native currency) and its `fx_rate_to_usd` (used when `currency != reporting_currency`). Build a single `fx_rates` map keyed by currency code.
+
 ```
-execute_trade.py '{"snapshot_value": true, "holdings_values": {"TICKER": current_price, ...}, "trades": []}'
+execute_trade.py '{"snapshot_value": true,
+  "holdings_values": {"NVDA": 209.43, "BAS.DE": 54.74, "JEQP.L": 1966.9},
+  "fx_rates": {"USD": 1.0, "EUR": 1.174, "GBP": 1.36}
+}'
 ```
+Pass `holdings_values` in NATIVE currency units for each ticker. The script computes both native and reporting-currency totals for each position. If you omit a currency from `fx_rates`, it is live-fetched.
 
 Finally, generate and open the dashboard:
 ```

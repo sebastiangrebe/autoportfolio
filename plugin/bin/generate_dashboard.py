@@ -20,12 +20,17 @@ STATE_FILE = Path("data/portfolio_state.json")
 OUTPUT_FILE = Path("data/dashboard.html")
 
 
+PRE_V2_BACKUP = Path("data/portfolio_state.pre-v2.json")
+
+
 def load_state():
     if not STATE_FILE.exists():
         print(json.dumps({"error": f"{STATE_FILE} not found"}))
         sys.exit(1)
     state = json.loads(STATE_FILE.read_text())
-    if _migrate_ledger_deposit_types(state):
+    dirty = _migrate_ledger_deposit_types(state)
+    dirty = _migrate_to_multicurrency(state) or dirty
+    if dirty:
         STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
     return state
 
@@ -51,51 +56,238 @@ def _migrate_ledger_deposit_types(state) -> bool:
     return changed
 
 
-def build_holdings_rows(holdings, latest_snap=None):
+def _utcnow_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _migrate_to_multicurrency(state) -> bool:
+    """One-shot v1 -> v2 migration. Mirrors execute_trade.migrate_to_multicurrency."""
+    if state.get("schema_version") == 2:
+        return False
+
+    if STATE_FILE.exists() and not PRE_V2_BACKUP.exists():
+        PRE_V2_BACKUP.parent.mkdir(parents=True, exist_ok=True)
+        PRE_V2_BACKUP.write_text(STATE_FILE.read_text())
+
+    state.setdefault("reporting_currency", "USD")
+    rep = state["reporting_currency"]
+    now = _utcnow_iso()
+
+    for ticker, h in state.get("holdings", {}).items():
+        if "avg_cost_native" in h:
+            continue
+        h["avg_cost_native"] = h.get("avg_cost")
+        ccy = h.get("currency", rep)
+        if ccy == rep:
+            h["fx_rate_at_buy"] = 1.0
+            h["cost_basis_verified"] = True
+            h["migration_approx"] = False
+        else:
+            h["fx_rate_at_buy"] = None
+            h["cost_basis_verified"] = False
+            h["migration_approx"] = True
+        h["migrated_to_multicurrency_at"] = now
+
+    for entry in state.get("ledger", []):
+        if entry.get("action") not in ("BUY", "SELL", "IMPORT"):
+            continue
+        if "price_native" in entry:
+            continue
+        ccy = entry.get("currency", rep)
+        entry["price_native"] = entry.get("price")
+        entry["total_native"] = entry.get("total")
+        if ccy == rep:
+            entry["fx_rate_at_trade"] = 1.0
+            entry["total_reporting"] = entry.get("total")
+        else:
+            entry["fx_rate_at_trade"] = None
+            entry["total_reporting"] = entry.get("total")
+            entry["migration_approx"] = True
+
+    for snap in state.get("value_history", []):
+        snap.setdefault("schema", "v1")
+
+    state["schema_version"] = 2
+    return True
+
+
+CURRENCY_SYMBOL = {
+    "USD": "$", "EUR": "€", "GBP": "£", "CHF": "CHF ", "JPY": "¥",
+    "PLN": "zł ", "CAD": "C$", "AUD": "A$", "HKD": "HK$",
+}
+
+
+def _fmt_money(amount, currency):
+    """Format a number with the right currency symbol. Falls back to ISO code."""
+    if not isinstance(amount, (int, float)):
+        return "—"
+    sym = CURRENCY_SYMBOL.get(currency)
+    if sym is None:
+        return f"{amount:,.2f} {currency}"
+    if currency in ("PLN", "CHF"):
+        return f"{sym}{amount:,.2f}"
+    return f"{sym}{amount:,.2f}"
+
+
+def _fmt_signed(amount, currency):
+    if not isinstance(amount, (int, float)):
+        return "—"
+    sign = "+" if amount >= 0 else "−"
+    return _fmt_money(abs(amount), currency).replace(
+        CURRENCY_SYMBOL.get(currency, currency),
+        sign + CURRENCY_SYMBOL.get(currency, currency),
+        1,
+    )
+
+
+def build_holdings_rows(holdings, latest_snap=None, reporting_currency="USD"):
     if not holdings:
         return '<tr><td colspan="10" style="text-align:center;color:#888;padding:24px">No holdings yet</td></tr>'
     snap_positions = (latest_snap or {}).get("positions", {})
+    rep = reporting_currency
     rows = []
     for ticker, info in sorted(holdings.items()):
         shares = info["shares"]
-        avg_cost = info["avg_cost"]
-        total_cost = round(shares * avg_cost, 2)
+        avg_cost_native = info.get("avg_cost_native", info.get("avg_cost"))
+        fx_at_buy = info.get("fx_rate_at_buy")
         last_buy = info.get("last_buy", "—")[:10]
         currency = info.get("currency", "USD")
         htype = info.get("type", "growth")
         div_yield = info.get("dividend_yield_pct")
+        is_native = currency == rep
+
+        # Reporting-currency cost basis — falls back to native when fx unknown.
+        avg_cost_reporting = (
+            avg_cost_native * fx_at_buy
+            if (avg_cost_native is not None and fx_at_buy is not None)
+            else None
+        )
+        total_cost_native = round(shares * avg_cost_native, 2) if avg_cost_native is not None else None
+        total_cost_reporting = (
+            round(shares * avg_cost_reporting, 2) if avg_cost_reporting is not None else None
+        )
 
         pos = snap_positions.get(ticker, {})
-        price = pos.get("price")
-        mkt_value = pos.get("value")
-        pnl = pos.get("pnl")
+        price_native = pos.get("price_native", pos.get("price"))
+        fx_at_snapshot = pos.get("fx_rate_at_snapshot")
+        value_native = pos.get("value_native")
+        value_reporting = pos.get("value_reporting", pos.get("value"))
+        pnl_native = pos.get("pnl_native")
+        pnl_reporting = pos.get("pnl_reporting", pos.get("pnl"))
+        pnl_fx = pos.get("pnl_fx")
 
-        if isinstance(price, (int, float)):
-            price_str = f"${price:,.2f}"
-            mkt_value_str = f"${mkt_value:,.2f}"
-            pnl_pct = (pnl / total_cost * 100) if total_cost else 0
-            pnl_class = "positive" if pnl >= 0 else "negative"
-            pnl_str = f'<span class="{pnl_class}">${pnl:+,.2f} ({pnl_pct:+.2f}%)</span>'
+        # AVG COST cell.
+        if is_native:
+            avg_cost_cell = _fmt_money(avg_cost_native, currency)
         else:
-            price_str = mkt_value_str = pnl_str = "—"
+            top = _fmt_money(avg_cost_native, currency)
+            if avg_cost_reporting is not None and fx_at_buy is not None:
+                bottom = (
+                    f"<span style='color:#8b949e;font-size:11px'>"
+                    f"{_fmt_money(avg_cost_reporting, rep)} @ {fx_at_buy:.3f}</span>"
+                )
+            else:
+                bottom = "<span style='color:#8b949e;font-size:11px'>fx unknown</span>"
+            avg_cost_cell = f"{top}<br>{bottom}"
+
+        # PRICE cell.
+        if not isinstance(price_native, (int, float)):
+            price_cell = "—"
+        elif is_native:
+            price_cell = _fmt_money(price_native, currency)
+        else:
+            top = _fmt_money(price_native, currency)
+            price_reporting = (
+                price_native * fx_at_snapshot if isinstance(fx_at_snapshot, (int, float)) else None
+            )
+            if price_reporting is not None:
+                bottom = (
+                    f"<span style='color:#8b949e;font-size:11px'>"
+                    f"{_fmt_money(price_reporting, rep)} @ {fx_at_snapshot:.3f}</span>"
+                )
+            else:
+                bottom = "<span style='color:#8b949e;font-size:11px'>fx unknown</span>"
+            price_cell = f"{top}<br>{bottom}"
+
+        # MARKET VALUE cell.
+        if not isinstance(value_reporting, (int, float)):
+            mkt_value_cell = "—"
+        elif is_native:
+            mkt_value_cell = _fmt_money(value_reporting, rep)
+        else:
+            top = _fmt_money(value_native, currency) if isinstance(value_native, (int, float)) else "—"
+            bottom = (
+                f"<span style='color:#8b949e;font-size:11px'>{_fmt_money(value_reporting, rep)}</span>"
+            )
+            mkt_value_cell = f"{top}<br>{bottom}"
+
+        # P&L cell.
+        if not isinstance(pnl_reporting, (int, float)):
+            pnl_cell = "—"
+        else:
+            pnl_class = "positive" if pnl_reporting >= 0 else "negative"
+            pnl_pct = (pnl_reporting / total_cost_reporting * 100) if total_cost_reporting else 0
+            if is_native:
+                sign = "+" if pnl_reporting >= 0 else "−"
+                pnl_cell = (
+                    f'<span class="{pnl_class}">{sign}{_fmt_money(abs(pnl_reporting), rep)} '
+                    f'({pnl_pct:+.2f}%)</span>'
+                )
+            else:
+                if isinstance(pnl_native, (int, float)):
+                    sign_n = "+" if pnl_native >= 0 else "−"
+                    native_pct = (pnl_native / total_cost_native * 100) if total_cost_native else 0
+                    top = (
+                        f'<span class="{pnl_class}">{sign_n}'
+                        f'{_fmt_money(abs(pnl_native), currency)} ({native_pct:+.2f}%)</span>'
+                    )
+                else:
+                    top = "—"
+                sign_r = "+" if pnl_reporting >= 0 else "−"
+                fx_part = ""
+                if isinstance(pnl_fx, (int, float)):
+                    fx_sign = "+" if pnl_fx >= 0 else "−"
+                    fx_part = (
+                        f"  <span style='color:#8b949e'>FX {fx_sign}"
+                        f"{_fmt_money(abs(pnl_fx), rep)}</span>"
+                    )
+                bottom = (
+                    f"<span style='font-size:11px'>{sign_r}"
+                    f"{_fmt_money(abs(pnl_reporting), rep)}{fx_part}</span>"
+                )
+                pnl_cell = f"{top}<br>{bottom}"
 
         type_badge = f'<span class="badge htype-{htype}">{htype}</span>'
-        # Annual income = current market value × dividend_yield_pct / 100
-        if htype == "dividend" and div_yield and isinstance(mkt_value, (int, float)):
-            annual = mkt_value * div_yield / 100
-            income_str = f"<strong>${annual:,.2f}</strong>/yr<br><span style='color:#8b949e;font-size:12px'>{div_yield}% yield</span>"
+        verify_badge = ""
+        if info.get("tag_suspicious"):
+            verify_badge = (
+                ' <span class="badge verify" title="' + info.get("tag_suspicious_reason", "verify cost basis").replace('"', "&quot;")
+                + '">verify</span>'
+            )
+        elif not info.get("cost_basis_verified", True) and not is_native:
+            verify_badge = (
+                ' <span class="badge approx" title="cost basis approximated during migration">approx</span>'
+            )
+
+        # Income.
+        if htype == "dividend" and div_yield and isinstance(value_reporting, (int, float)):
+            annual = value_reporting * div_yield / 100
+            income_str = (
+                f"<strong>{_fmt_money(annual, rep)}</strong>/yr"
+                f"<br><span style='color:#8b949e;font-size:12px'>{div_yield}% yield</span>"
+            )
         else:
             income_str = '<span style="color:#484f58">—</span>'
 
         rows.append(f"""<tr>
             <td><strong>{ticker}</strong></td>
-            <td>{type_badge}</td>
+            <td>{type_badge}{verify_badge}</td>
             <td><span class="badge ccy">{currency}</span></td>
             <td>{shares}</td>
-            <td>${avg_cost:,.2f}</td>
-            <td>{price_str}</td>
-            <td>{mkt_value_str}</td>
-            <td>{pnl_str}</td>
+            <td>{avg_cost_cell}</td>
+            <td>{price_cell}</td>
+            <td>{mkt_value_cell}</td>
+            <td>{pnl_cell}</td>
             <td>{income_str}</td>
             <td>{last_buy}</td>
         </tr>""")
@@ -714,28 +906,55 @@ def generate_html(state):
     watchlist = state.get("watchlist", [])
     value_history = state.get("value_history", [])
     recurring = state.get("recurring_income")
+    rep = state.get("reporting_currency", "USD")
 
     # Compute totals — prefer latest snapshot's market value, fall back to cost basis
     latest_snap = value_history[-1] if value_history else None
+    snapshot_is_v1 = bool(latest_snap and latest_snap.get("schema") == "v1")
     if latest_snap and latest_snap.get("holdings_value") is not None:
         holdings_value = latest_snap["holdings_value"]
         total_value = latest_snap.get("total_value", cash + holdings_value)
         holdings_label = "at market"
     else:
-        holdings_value = sum(h["shares"] * h["avg_cost"] for h in holdings.values())
+        # Cost-basis fallback in reporting currency.
+        holdings_value = 0.0
+        for h in holdings.values():
+            avg = h.get("avg_cost_native", h.get("avg_cost", 0))
+            fx = h.get("fx_rate_at_buy") or 1.0
+            holdings_value += h["shares"] * avg * fx
         total_value = cash + holdings_value
         holdings_label = "at cost"
     num_positions = len(holdings)
 
-    # Estimated annual dividend income across all dividend-type positions
+    # Estimated annual dividend income — uses reporting-currency snapshot value
+    # (legacy alias `value` preserved for v1 snapshots).
     annual_income = 0.0
     snap_positions = (latest_snap or {}).get("positions", {})
     for t, h in holdings.items():
         if h.get("type") == "dividend" and h.get("dividend_yield_pct"):
-            val = snap_positions.get(t, {}).get("value") or (h["shares"] * h["avg_cost"])
+            pos = snap_positions.get(t, {})
+            val = pos.get("value_reporting") or pos.get("value")
+            if val is None:
+                avg = h.get("avg_cost_native", h.get("avg_cost", 0))
+                fx = h.get("fx_rate_at_buy") or 1.0
+                val = h["shares"] * avg * fx
             annual_income += val * h["dividend_yield_pct"] / 100
     annual_income = round(annual_income, 2)
     monthly_income = round(annual_income / 12, 2)
+
+    # Unrealized stock vs FX P&L decomposition from current snapshot's positions.
+    unrealized_pnl_total = 0.0
+    unrealized_pnl_fx = 0.0
+    for pos in snap_positions.values():
+        if isinstance(pos.get("pnl_reporting"), (int, float)):
+            unrealized_pnl_total += pos["pnl_reporting"]
+        if isinstance(pos.get("pnl_fx"), (int, float)):
+            unrealized_pnl_fx += pos["pnl_fx"]
+    unrealized_pnl_stock = round(unrealized_pnl_total - unrealized_pnl_fx, 2)
+    unrealized_pnl_fx = round(unrealized_pnl_fx, 2)
+    has_pnl_decomposition = any(
+        "pnl_fx" in pos for pos in snap_positions.values()
+    )
 
     target = state.get("dividend_income_target")  # {"amount": 10000, "frequency": "monthly"}
     if target and target.get("amount"):
@@ -789,6 +1008,29 @@ def generate_html(state):
     if recurring:
         recurring_str = f"${recurring['amount']:,.2f} / {recurring['frequency']}"
 
+    # Stock vs FX P&L decomposition sub-line.
+    if has_pnl_decomposition and (abs(unrealized_pnl_stock) >= 1 or abs(unrealized_pnl_fx) >= 1):
+        stock_sign = "+" if unrealized_pnl_stock >= 0 else "−"
+        fx_sign = "+" if unrealized_pnl_fx >= 0 else "−"
+        pnl_decomp_sub = (
+            f'<div class="sub">Unrealized: Stock {stock_sign}${abs(unrealized_pnl_stock):,.0f} · '
+            f'FX {fx_sign}${abs(unrealized_pnl_fx):,.0f}</div>'
+        )
+    else:
+        pnl_decomp_sub = ""
+
+    # v1-snapshot warning banner.
+    if snapshot_is_v1 and holdings:
+        snapshot_warning_html = (
+            '<div style="background:#3b2a1f;border:1px solid #6b4a2c;color:#fbbf24;'
+            'padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:13px">'
+            '⚠️ Latest snapshot pre-dates the multi-currency fix — values may be off by '
+            'an FX rate. Re-run /autoportfolio to refresh.'
+            '</div>'
+        )
+    else:
+        snapshot_warning_html = ""
+
     contribution_card_html = _build_contribution_card(state, recurring, ledger)
 
     now = datetime.now().strftime("%B %d, %Y at %H:%M")
@@ -829,6 +1071,8 @@ tr:hover {{ background: #1c2129; }}
 .badge.ccy {{ background: #2d3440; color: #8b949e; letter-spacing: 0; font-size: 10px; }}
 .badge.htype-growth {{ background: #1e3a5f; color: #60a5fa; }}
 .badge.htype-dividend {{ background: #3d2f1a; color: #fbbf24; }}
+.badge.verify {{ background: #4a1d1d; color: #f87171; cursor: help; }}
+.badge.approx {{ background: #2d2818; color: #a8a29e; cursor: help; }}
 .positive {{ color: #3fb950; }}
 .negative {{ color: #f85149; }}
 .chart-container {{ background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 24px; margin-bottom: 32px; }}
@@ -863,6 +1107,7 @@ footer {{ text-align: center; color: #484f58; font-size: 12px; padding: 24px 0; 
             <div class="label">Total P&L</div>
             <div class="value {'positive' if total_pnl >= 0 else 'negative'}">${total_pnl:+,.2f}</div>
             <div class="sub">{pnl_pct:+.2f}% overall</div>
+            {pnl_decomp_sub}
         </div>
     </div>
 
@@ -875,12 +1120,13 @@ footer {{ text-align: center; color: #484f58; font-size: 12px; padding: 24px 0; 
 
     <section>
         <h2>Current Holdings</h2>
+        {snapshot_warning_html}
         <table>
             <thead><tr>
                 <th>Ticker</th><th>Type</th><th>Ccy</th><th>Shares</th><th>Avg Cost</th><th>Price</th><th>Market Value</th><th>Unrealized P&L</th><th>Est. Income</th><th>Last Buy</th>
             </tr></thead>
             <tbody>
-                {build_holdings_rows(holdings, latest_snap)}
+                {build_holdings_rows(holdings, latest_snap, rep)}
             </tbody>
         </table>
     </section>
