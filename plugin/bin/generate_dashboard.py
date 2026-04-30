@@ -424,7 +424,7 @@ def _render_dividend_goal(scenarios, monthly_income):
         if a_years:
             delta_yr = a_years - b_years
             sign = "−" if delta_yr >= 0 else "+"
-            delta_label = f"{sign}{abs(delta_yr):.1f} yr vs always"
+            delta_label = f"{sign}{abs(delta_yr):.1f} yr vs Scenario A (always {split_str})"
 
     # Trajectory data — format for Chart.js. Each tuple is (month, monthly_div, total_assets).
     def _series_js(traj, idx):
@@ -480,8 +480,8 @@ def _render_dividend_goal(scenarios, monthly_income):
 
         <div class="card" style="padding:16px;margin-bottom:16px;background:#1c2129;border-color:#2d3440">
             <div class="sub" style="color:#e1e4e8;font-size:13px;line-height:1.6">
-                <strong>Trade-off:</strong> Scenario B reaches the dividend target <strong>{delta_label or 'sooner'}</strong>,
-                but Scenario A leaves you with much more total wealth at horizon end
+                <strong>Trade-off:</strong> Scenario B reaches the dividend target <strong>{delta_label or 'sooner'}</strong>.
+                But Scenario A — keeping the {split_str} split forever, never rotating — leaves you with much more total wealth at horizon end
                 (<strong>${final_total_a:,.0f}</strong> vs <strong>${final_total_b:,.0f}</strong>) because the growth
                 bucket keeps compounding at {growth_rate_pct:.1f}% instead of being rotated to a {avg_yield:.2f}%-yielding instrument.
                 B optimizes <em>monthly cashflow</em>; A optimizes <em>terminal wealth</em>.
