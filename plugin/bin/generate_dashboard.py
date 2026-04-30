@@ -747,7 +747,7 @@ footer {{ text-align: center; color: #484f58; font-size: 12px; padding: 24px 0; 
         <div class="card">
             <div class="label">Total Portfolio Value</div>
             <div class="value">${total_value:,.2f}</div>
-            <div class="sub">Cash + Holdings ({holdings_label})</div>
+            <div class="sub">${holdings_value:,.0f} holdings ({holdings_label}) · {num_positions} position{'s' if num_positions != 1 else ''}</div>
         </div>
         <div class="card">
             <div class="label">Available Cash</div>
@@ -756,19 +756,9 @@ footer {{ text-align: center; color: #484f58; font-size: 12px; padding: 24px 0; 
         </div>
 {contribution_card_html}
         <div class="card">
-            <div class="label">Holdings Value</div>
-            <div class="value">${holdings_value:,.2f}</div>
-            <div class="sub">{num_positions} position{'s' if num_positions != 1 else ''}</div>
-        </div>
-        <div class="card">
             <div class="label">Total P&L</div>
             <div class="value {'positive' if total_pnl >= 0 else 'negative'}">${total_pnl:+,.2f}</div>
             <div class="sub">{pnl_pct:+.2f}% overall</div>
-        </div>
-        <div class="card">
-            <div class="label">Est. Dividend Income</div>
-            <div class="value">${annual_income:,.2f}/yr</div>
-            <div class="sub">{income_sub}</div>
         </div>
     </div>
 
