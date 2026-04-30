@@ -559,6 +559,8 @@ if (divGoalEl) {{
             scales: {{
                 x: {{
                     type: 'linear',
+                    min: 0,
+                    max: {horizon_months},
                     title: {{ display: true, text: 'Years', color: '#8b949e' }},
                     ticks: {{ color: '#484f58', callback: v => (v / 12).toFixed(0) + 'y' }},
                     grid: {{ color: '#21262d' }},
@@ -617,6 +619,8 @@ if (totalAssetsEl) {{
             scales: {{
                 x: {{
                     type: 'linear',
+                    min: 0,
+                    max: {horizon_months},
                     title: {{ display: true, text: 'Years', color: '#8b949e' }},
                     ticks: {{ color: '#484f58', callback: v => (v / 12).toFixed(0) + 'y' }},
                     grid: {{ color: '#21262d' }},
