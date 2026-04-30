@@ -429,12 +429,15 @@ def _render_dividend_goal(scenarios, monthly_income):
     target_line = round(m_target, 2)
     flip_x = b["flip_at_months"] if b else 0
 
+    annual_target = m_target * 12
+    annual_income = monthly_income * 12
+
     body = f"""    <section>
         <h2>Dividend Goal</h2>
         <div class="card" style="padding:24px;margin-bottom:16px">
             <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:8px">
-                <div style="font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px">Progress to ${m_target:,.0f}/mo</div>
-                <div style="color:#8b949e;font-size:13px">${monthly_income:,.2f}/mo · {progress_pct:.2f}%</div>
+                <div style="font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px">Progress to ${m_target:,.0f}/mo · ${annual_target:,.0f}/yr</div>
+                <div style="color:#8b949e;font-size:13px">${monthly_income:,.2f}/mo · ${annual_income:,.2f}/yr · {progress_pct:.2f}%</div>
             </div>
             <div style="background:#0f1117;height:10px;border-radius:6px;overflow:hidden">
                 <div style="background:linear-gradient(90deg,#3fb950,#58a6ff);height:100%;width:{min(progress_pct, 100):.2f}%"></div>
