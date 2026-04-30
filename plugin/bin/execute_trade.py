@@ -17,10 +17,19 @@ Payload keys (all optional, processed in order):
     {
       # Cash management — pick one:
       "set_budget": 10000.00,                  # SET available_cash to this value (SET_BUDGET ledger)
-      "deposit": 4000.00,                      # ADD to available_cash (DEPOSIT ledger)
+      "deposit": 4000.00,                      # ADD to available_cash (DEPOSIT, type=recurring)
+      "deposit": {"amount": 98000, "type": "seed"},  # tag deposit_type explicitly
       "adjust_cash": {"amount": -50, "reason": "broker fee"},  # signed ADJUST ledger
 
-      "recurring_income": {"amount": 2000.00, "frequency": "monthly"},
+      # Log a recurring/catchup contribution that is ALREADY inside available_cash:
+      # writes DEPOSIT + offsetting ADJUST atomically (cash unchanged, card credits).
+      "log_contribution": {
+        "amount": 4000, "type": "catchup", "timestamp": "2026-03-17",
+        "rationale": "Mar contribution already inside seed"
+      },
+
+      "recurring_income": {"amount": 2000.00, "frequency": "monthly",
+                           "started_at": "2026-02-17T00:00:00Z"},  # started_at optional
 
       # Import an existing position without debiting cash:
       "import_position": {
@@ -66,7 +75,10 @@ def utcnow_iso() -> str:
 
 def load_state():
     if STATE_FILE.exists() and STATE_FILE.stat().st_size > 0:
-        return json.loads(STATE_FILE.read_text())
+        state = json.loads(STATE_FILE.read_text())
+        if migrate_ledger_deposit_types(state):
+            save_state(state)
+        return state
     return {
         "available_cash": 0.0,
         "recurring_income": None,
@@ -96,15 +108,78 @@ def op_set_budget(state, value: float):
     })
 
 
-def op_deposit(state, amount: float):
+VALID_DEPOSIT_TYPES = ("seed", "recurring", "catchup")
+
+
+def op_deposit(state, amount: float, deposit_type: str = "recurring"):
     amount = round(float(amount), 2)
+    if deposit_type not in VALID_DEPOSIT_TYPES:
+        deposit_type = "recurring"
     state["available_cash"] = round(state["available_cash"] + amount, 2)
     state["ledger"].append({
         "timestamp": utcnow_iso(),
         "action": "DEPOSIT",
+        "deposit_type": deposit_type,
         "total": amount,
         "cash_after": state["available_cash"],
     })
+
+
+def op_log_contribution(state, amount: float, deposit_type: str = "catchup",
+                        timestamp: str = None, rationale: str = ""):
+    """Log a contribution already inside available_cash.
+
+    Writes a DEPOSIT (visible to the contribution card) and an offsetting
+    ADJUST atomically, so available_cash stays unchanged but the card credits
+    the contribution. Useful for backfilling cycles that were funded out of an
+    earlier seed deposit, or for normalizing manual top-ups.
+    """
+    amount = round(float(amount), 2)
+    if deposit_type not in VALID_DEPOSIT_TYPES:
+        deposit_type = "catchup"
+    ts = timestamp or utcnow_iso()
+    if len(ts) == 10:
+        ts = ts + "T00:00:00Z"
+
+    state["available_cash"] = round(state["available_cash"] + amount, 2)
+    state["ledger"].append({
+        "timestamp": ts,
+        "action": "DEPOSIT",
+        "deposit_type": deposit_type,
+        "total": amount,
+        "rationale": rationale,
+        "cash_after": state["available_cash"],
+    })
+    state["available_cash"] = round(state["available_cash"] - amount, 2)
+    state["ledger"].append({
+        "timestamp": ts,
+        "action": "ADJUST",
+        "total": -amount,
+        "rationale": f"Offset {deposit_type} contribution already inside cash",
+        "cash_after": state["available_cash"],
+    })
+
+
+def migrate_ledger_deposit_types(state) -> bool:
+    """One-shot: tag legacy DEPOSIT entries with `deposit_type`.
+
+    Heuristic: if a DEPOSIT entry has no deposit_type and its timestamp is
+    earlier than recurring_income.started_at, tag as 'seed'; otherwise
+    'recurring'. Returns True if any entry was touched.
+    """
+    ledger = state.get("ledger", [])
+    rec = state.get("recurring_income") or {}
+    started_at = rec.get("started_at", "") or ""
+    changed = False
+    for entry in ledger:
+        if entry.get("action") != "DEPOSIT":
+            continue
+        if "deposit_type" in entry:
+            continue
+        ts = entry.get("timestamp", "") or ""
+        entry["deposit_type"] = "seed" if (started_at and ts < started_at) else "recurring"
+        changed = True
+    return changed
 
 
 def op_adjust_cash(state, amount: float, reason: str = ""):
@@ -401,10 +476,24 @@ def main():
     if "set_budget" in payload:
         op_set_budget(state, payload["set_budget"])
     if "deposit" in payload:
-        op_deposit(state, payload["deposit"])
+        dep = payload["deposit"]
+        if isinstance(dep, dict):
+            op_deposit(state, dep["amount"], dep.get("type", "recurring"))
+        else:
+            op_deposit(state, dep)
     if "adjust_cash" in payload:
         adj = payload["adjust_cash"]
         op_adjust_cash(state, adj["amount"], adj.get("reason", ""))
+
+    if "log_contribution" in payload:
+        lc = payload["log_contribution"]
+        op_log_contribution(
+            state,
+            lc["amount"],
+            lc.get("type", "catchup"),
+            lc.get("timestamp"),
+            lc.get("rationale", ""),
+        )
 
     if "recurring_income" in payload and payload["recurring_income"]:
         cfg = dict(payload["recurring_income"])
