@@ -416,30 +416,24 @@ def _render_dividend_goal(scenarios, monthly_income):
     split_human = f"{growth_pct}% growth / {div_pct}% dividend"
 
     a_years = (a["months"] / 12) if a["months"] else None
-    a_label = f"~{a_years:.1f} years" if a_years else "Target never reached"
+    a_label = f"~{a_years:.1f} years" if a_years else "Never reached"
 
     b_label = "—"
-    b_detail = ""
+    b_bullets = ""
     delta_label = ""
     if b:
         b_years = b["months"] / 12
         phase2_years = b["phase2_months"] / 12
         b_label = f"~{b_years:.1f} years"
-        rounded_phase2 = round(phase2_years, 1)
-        phase2_word = "year" if rounded_phase2 == 1.0 else "years"
-        b_detail = (
-            f"From year 0 to year {b['flip_at_years']}, keep the {split_human} split. "
-            f"At year {b['flip_at_years']}, sell every growth-tagged holding (which by then will be worth roughly ${b['P_at_flip']:,.0f}) "
-            f"and reinvest all proceeds into dividend-paying instruments yielding {avg_yield:.2f}%. "
-            f"From that point on, the entire ${contrib_total:,.0f}/month contribution goes into dividend holdings instead of being split. "
-            f"The dividend target is then reached {rounded_phase2:.1f} more {phase2_word} after the pivot."
+        b_bullets = (
+            f"<li>Years 0–{b['flip_at_years']}: keep {split_human} split.</li>"
+            f"<li>Year {b['flip_at_years']}: sell all growth holdings (~${b['P_at_flip']:,.0f}), reinvest in {avg_yield:.2f}% dividend instruments.</li>"
+            f"<li>Year {b['flip_at_years']} onward: full ${contrib_total:,.0f}/mo to dividends. Target hit {phase2_years:.1f} yr later.</li>"
         )
         if a_years:
             delta_yr = a_years - b_years
-            if delta_yr >= 0:
-                delta_label = f"Reaches target {abs(delta_yr):.1f} years sooner than Scenario A"
-            else:
-                delta_label = f"Reaches target {abs(delta_yr):.1f} years later than Scenario A"
+            sign = "sooner" if delta_yr >= 0 else "later"
+            delta_label = f"{abs(delta_yr):.1f} years {sign} than A"
 
     # Trajectory data — format for Chart.js. Each tuple is (month, monthly_div, total_assets).
     def _series_js(traj, idx):
@@ -463,75 +457,58 @@ def _render_dividend_goal(scenarios, monthly_income):
 
     body = f"""    <section>
         <h2>Dividend Goal</h2>
-        <div class="card" style="padding:24px;margin-bottom:16px">
+        <div class="card" style="padding:20px 24px;margin-bottom:16px">
             <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:8px">
-                <div style="font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px">
-                    Progress toward ${m_target:,.0f}/month (${annual_target:,.0f}/year) in dividend income
-                </div>
-                <div style="color:#8b949e;font-size:13px">
-                    Currently ${monthly_income:,.2f}/month · ${annual_income:,.2f}/year · {progress_pct:.2f}% of target
-                </div>
+                <div style="font-size:13px;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px">Progress toward ${m_target:,.0f}/mo · ${annual_target:,.0f}/yr</div>
+                <div style="color:#8b949e;font-size:13px">${monthly_income:,.2f}/mo · ${annual_income:,.2f}/yr · {progress_pct:.2f}%</div>
             </div>
             <div style="background:#0f1117;height:10px;border-radius:6px;overflow:hidden">
                 <div style="background:linear-gradient(90deg,#3fb950,#58a6ff);height:100%;width:{min(progress_pct, 100):.2f}%"></div>
             </div>
-            <div class="sub" style="margin-top:12px;line-height:1.6">
-                Weighted dividend yield across your dividend-tagged holdings: <strong>{avg_yield:.2f}%</strong>.
-                Current dividend holdings value: <strong>${p_now:,.0f}</strong>.
-                Current growth holdings value: <strong>${g_now:,.0f}</strong>.
-                To produce ${m_target:,.0f}/month at {avg_yield:.2f}% yield you need <strong>${p_target:,.0f}</strong> invested in dividend instruments.
+            <div class="sub" style="margin-top:10px;display:flex;gap:18px;flex-wrap:wrap">
+                <span>Yield <strong>{avg_yield:.2f}%</strong></span>
+                <span>Dividend holdings <strong>${p_now:,.0f}</strong></span>
+                <span>Growth holdings <strong>${g_now:,.0f}</strong></span>
+                <span>Principal needed <strong>${p_target:,.0f}</strong></span>
             </div>
         </div>
 
         <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-bottom:16px">
             <div class="card">
-                <div class="label">Scenario A — Keep the split forever</div>
+                <div class="label">A · Keep the split forever</div>
                 <div class="value">{a_label}</div>
-                <div class="sub" style="line-height:1.6">
-                    Stay at <strong>{split_human}</strong> indefinitely.
-                    Each month, ${contrib_div:,.0f} goes into dividend holdings (which compound at the dividend yield of {avg_yield:.2f}%/year via reinvested distributions),
-                    and ${contrib_grow:,.0f} goes into growth holdings (which compound at {growth_rate_pct:.1f}%/year, the assumed long-run growth return).
-                    Growth holdings are <em>never sold</em> — only the dividend bucket counts toward the dividend target.
-                </div>
-                <div class="sub" style="margin-top:8px">Portfolio value when target is reached: <strong>${final_total_a:,.0f}</strong></div>
+                <ul class="bullets">
+                    <li>Each month: ${contrib_div:,.0f} → dividends @ {avg_yield:.2f}%, ${contrib_grow:,.0f} → growth @ {growth_rate_pct:.1f}%.</li>
+                    <li>Growth holdings never sold. Only dividend bucket counts toward target.</li>
+                    <li>Portfolio at target: <strong>${final_total_a:,.0f}</strong>.</li>
+                </ul>
             </div>
             <div class="card">
-                <div class="label">Scenario B — Pivot growth holdings into dividends at the optimal year</div>
+                <div class="label">B · Pivot growth into dividends at year {b['flip_at_years'] if b else '—'}</div>
                 <div class="value positive">{b_label}</div>
-                <div class="sub" style="line-height:1.6">{b_detail or '—'}</div>
-                <div class="sub" style="color:#3fb950;margin-top:8px"><strong>{delta_label}</strong></div>
-                <div class="sub" style="margin-top:8px">Portfolio value when target is reached: <strong>${final_total_b:,.0f}</strong></div>
+                <ul class="bullets">
+                    {b_bullets or '<li>—</li>'}
+                    <li style="color:#3fb950"><strong>{delta_label}</strong>. Portfolio at target: <strong>${final_total_b:,.0f}</strong>.</li>
+                </ul>
             </div>
         </div>
 
-        <div class="card" style="padding:16px;margin-bottom:16px;background:#1c2129;border-color:#2d3440">
-            <div class="sub" style="color:#e1e4e8;font-size:13px;line-height:1.7">
-                <strong>How to pick:</strong> Scenario B reaches the monthly dividend target much sooner because at the pivot year it converts every growth-tagged holding
-                into a {avg_yield:.2f}%-yielding dividend instrument, after which the full monthly contribution feeds the dividend bucket.
-                Scenario A never sells the growth holdings, so they keep compounding at the higher long-run growth return ({growth_rate_pct:.1f}%/year) forever.
-                That means Scenario A takes much longer for the dividend holdings alone to reach the income target, but by the time it gets there,
-                the untouched growth holdings have grown into a much larger pile.
-                <br><br>
-                <strong>Choose B</strong> if you want the highest possible monthly cash income as early as possible.
-                <strong>Choose A</strong> if you want the largest total net worth at the end of the projection period and are willing to wait longer for the dividend income to ramp up.
+        <div class="card" style="padding:14px 18px;margin-bottom:16px;background:#1c2129;border-color:#2d3440">
+            <div class="sub" style="color:#e1e4e8;line-height:1.6">
+                <strong>Trade-off:</strong> B converts growth holdings (compounding at {growth_rate_pct:.1f}%) into {avg_yield:.2f}%-yielding dividend instruments earlier — faster monthly income, smaller terminal pile.
+                A keeps growth compounding forever — slower income, larger terminal pile.
             </div>
         </div>
 
         <div class="chart-container">
-            <h2 style="margin-bottom:16px">Projected monthly dividend income</h2>
+            <h2 style="margin-bottom:16px">Monthly dividend income over time</h2>
             <div class="chart-canvas-wrap"><canvas id="divGoalChart"></canvas></div>
-            <div class="sub" style="margin-top:12px">
-                The dashed red line marks the ${m_target:,.0f}/month target. Each curve crosses the target at the year shown on the scenario card.
-            </div>
         </div>
 
         <div class="chart-container">
-            <h2 style="margin-bottom:16px">Projected total portfolio value</h2>
+            <h2 style="margin-bottom:16px">Total portfolio value over time</h2>
             <div class="chart-canvas-wrap"><canvas id="totalAssetsChart"></canvas></div>
-            <div class="sub" style="margin-top:12px;line-height:1.6">
-                Long-run growth-holdings return assumption: {growth_rate_pct:.1f}% per year (override per portfolio via <code>strategy.growth_rate_pct</code> in <code>portfolio_state.json</code>).
-                Note: dividend totals on this dashboard currently sum native-currency holding values — EUR/GBP positions are added as if they were USD. See PR #2 follow-ups.
-            </div>
+            <div class="sub" style="margin-top:10px">Growth-rate assumption {growth_rate_pct:.1f}%/yr. Override via <code>strategy.growth_rate_pct</code>.</div>
         </div>
     </section>"""
 
@@ -545,7 +522,7 @@ if (divGoalEl) {{
         data: {{
             datasets: [
                 {{
-                    label: 'A — Keep {split_human} forever',
+                    label: 'A · Keep split',
                     data: {series_a_div},
                     borderColor: '#fbbf24',
                     backgroundColor: 'rgba(251,191,36,0.08)',
@@ -555,7 +532,7 @@ if (divGoalEl) {{
                     pointRadius: 0,
                 }},
                 {{
-                    label: 'B — Pivot growth into dividends at year {b["flip_at_years"] if b else 0}',
+                    label: 'B · Pivot at year {b["flip_at_years"] if b else 0}',
                     data: {series_b_div},
                     borderColor: '#3fb950',
                     backgroundColor: 'rgba(63,185,80,0.10)',
@@ -565,7 +542,7 @@ if (divGoalEl) {{
                     pointRadius: 0,
                 }},
                 {{
-                    label: 'Target: ${target_line:,.0f} per month',
+                    label: 'Target ${target_line:,.0f}/mo',
                     data: [{{x:0,y:{target_line}}},{{x:{horizon_months},y:{target_line}}}],
                     borderColor: '#f85149',
                     borderWidth: 1.5,
@@ -614,7 +591,7 @@ if (totalAssetsEl) {{
         data: {{
             datasets: [
                 {{
-                    label: 'A — Keep {split_human} forever (growth holdings keep compounding at {growth_rate_pct:.1f}%/year)',
+                    label: 'A · Keep split (growth keeps compounding)',
                     data: {series_a_total},
                     borderColor: '#fbbf24',
                     backgroundColor: 'rgba(251,191,36,0.08)',
@@ -624,7 +601,7 @@ if (totalAssetsEl) {{
                     pointRadius: 0,
                 }},
                 {{
-                    label: 'B — Pivot growth holdings into dividend instruments at year {b["flip_at_years"] if b else 0}',
+                    label: 'B · Pivot at year {b["flip_at_years"] if b else 0}',
                     data: {series_b_total},
                     borderColor: '#3fb950',
                     backgroundColor: 'rgba(63,185,80,0.10)',
@@ -857,6 +834,9 @@ tr:hover {{ background: #1c2129; }}
 .chart-container {{ background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 24px; margin-bottom: 32px; }}
 .chart-container > canvas {{ display: block; }}
 .chart-canvas-wrap {{ position: relative; height: 300px; width: 100%; }}
+ul.bullets {{ list-style: none; padding: 0; margin: 8px 0 0; font-size: 13px; color: #8b949e; }}
+ul.bullets li {{ padding: 3px 0 3px 16px; position: relative; line-height: 1.5; }}
+ul.bullets li::before {{ content: "·"; position: absolute; left: 4px; color: #484f58; font-weight: bold; }}
 footer {{ text-align: center; color: #484f58; font-size: 12px; padding: 24px 0; border-top: 1px solid #21262d; }}
 </style>
 </head>
