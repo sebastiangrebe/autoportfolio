@@ -313,23 +313,31 @@ def _build_scenarios(target, monthly_income, holdings, snap_positions, recurring
 
     traj_a = []
     traj_b = []
+    def _grow(p, contrib, rate, t):
+        if rate <= 0:
+            return p + contrib * t
+        return p * (1 + rate) ** t + contrib * ((1 + rate) ** t - 1) / rate
+
     for t in range(0, horizon + step, step):
-        # A
-        if n_a is None:
-            traj_a.append((t, _div_at_month(p_now, contrib_div, r, t)))
-        else:
-            traj_a.append((t, _div_at_month(p_now, contrib_div, r, t)))
-        # B — phase 1 then phase 2
+        # A — div bucket compounds at r, growth bucket compounds at g separately FOREVER.
+        D_a = _grow(p_now, contrib_div, r, t)
+        G_a = _grow(growth_value_total, contrib_grow, g, t)
+        traj_a.append((t, D_a * r, D_a + G_a))
+        # B — phase 1 (split) then phase 2 (combined into div bucket).
         if best:
             flip = best["flip_at_months"]
             if t <= flip:
-                d_inc = _div_at_month(p_now, contrib_div, r, t)
+                D_b = _grow(p_now, contrib_div, r, t)
+                G_b = _grow(growth_value_total, contrib_grow, g, t)
+                d_inc = D_b * r
+                total_b = D_b + G_b
             else:
                 tt = t - flip
                 P_flip = best["P_at_flip"]
-                P = P_flip * (1 + r) ** tt + contrib_total * ((1 + r) ** tt - 1) / r
+                P = _grow(P_flip, contrib_total, r, tt)
                 d_inc = P * r
-            traj_b.append((t, d_inc))
+                total_b = P
+            traj_b.append((t, d_inc, total_b))
 
     return {
         "reachable": True, "already_at_target": False,
@@ -418,16 +426,22 @@ def _render_dividend_goal(scenarios, monthly_income):
             sign = "−" if delta_yr >= 0 else "+"
             delta_label = f"{sign}{abs(delta_yr):.1f} yr vs always"
 
-    # Trajectory data — format for Chart.js
-    def _series_js(traj):
+    # Trajectory data — format for Chart.js. Each tuple is (month, monthly_div, total_assets).
+    def _series_js(traj, idx):
         return "[" + ",".join(
-            f"{{x:{t},y:{round(d, 2)}}}" for (t, d) in traj
+            f"{{x:{row[0]},y:{round(row[idx], 2)}}}" for row in traj
         ) + "]"
 
-    series_a = _series_js(a["trajectory"]) if a["trajectory"] else "[]"
-    series_b = _series_js(b["trajectory"]) if (b and b["trajectory"]) else "[]"
+    series_a_div = _series_js(a["trajectory"], 1) if a["trajectory"] else "[]"
+    series_b_div = _series_js(b["trajectory"], 1) if (b and b["trajectory"]) else "[]"
+    series_a_total = _series_js(a["trajectory"], 2) if a["trajectory"] else "[]"
+    series_b_total = _series_js(b["trajectory"], 2) if (b and b["trajectory"]) else "[]"
     target_line = round(m_target, 2)
     flip_x = b["flip_at_months"] if b else 0
+
+    # Final-state totals (at horizon end) — drives the trade-off framing.
+    final_total_a = a["trajectory"][-1][2] if a["trajectory"] else 0
+    final_total_b = b["trajectory"][-1][2] if (b and b["trajectory"]) else 0
 
     annual_target = m_target * 12
     annual_income = monthly_income * 12
@@ -452,25 +466,44 @@ def _render_dividend_goal(scenarios, monthly_income):
             <div class="card">
                 <div class="label">Scenario A — Always {split_str}</div>
                 <div class="value">{a_label}</div>
-                <div class="sub">${contrib_div:,.0f}/mo to div bucket compounding @ {avg_yield:.2f}% (growth bucket ignored)</div>
+                <div class="sub">${contrib_div:,.0f}/mo to div · ${contrib_grow:,.0f}/mo to growth (kept compounding @ {growth_rate_pct:.1f}%)</div>
+                <div class="sub" style="margin-top:8px">Total assets at horizon: <strong>${final_total_a:,.0f}</strong></div>
             </div>
             <div class="card">
                 <div class="label">Scenario B — Optimal Flip</div>
                 <div class="value positive">{b_label}</div>
                 <div class="sub">{b_detail or '—'}</div>
                 <div class="sub" style="color:#3fb950">{delta_label}</div>
+                <div class="sub" style="margin-top:8px">Total assets at horizon: <strong>${final_total_b:,.0f}</strong></div>
+            </div>
+        </div>
+
+        <div class="card" style="padding:16px;margin-bottom:16px;background:#1c2129;border-color:#2d3440">
+            <div class="sub" style="color:#e1e4e8;font-size:13px;line-height:1.6">
+                <strong>Trade-off:</strong> Scenario B reaches the dividend target <strong>{delta_label or 'sooner'}</strong>,
+                but Scenario A leaves you with much more total wealth at horizon end
+                (<strong>${final_total_a:,.0f}</strong> vs <strong>${final_total_b:,.0f}</strong>) because the growth
+                bucket keeps compounding at {growth_rate_pct:.1f}% instead of being rotated to a {avg_yield:.2f}%-yielding instrument.
+                B optimizes <em>monthly cashflow</em>; A optimizes <em>terminal wealth</em>.
             </div>
         </div>
 
         <div class="chart-container">
             <h2 style="margin-bottom:16px">Projected Monthly Dividend Income</h2>
             <canvas id="divGoalChart"></canvas>
+        </div>
+
+        <div class="chart-container">
+            <h2 style="margin-bottom:16px">Total Assets Over Time</h2>
+            <canvas id="totalAssetsChart"></canvas>
             <div class="sub" style="margin-top:12px">
                 Growth assumption {growth_rate_pct:.1f}%/yr (override via <code>strategy.growth_rate_pct</code>).
                 Currency mixing in source values is a known issue — see #2 follow-ups.
             </div>
         </div>
     </section>"""
+
+    horizon_months = max(int(a["months"] or 0), int(b["months"]) if b else 0)
 
     chart_js = f"""
 const divGoalEl = document.getElementById('divGoalChart');
@@ -481,7 +514,7 @@ if (divGoalEl) {{
             datasets: [
                 {{
                     label: 'A — Always {split_str}',
-                    data: {series_a},
+                    data: {series_a_div},
                     borderColor: '#fbbf24',
                     backgroundColor: 'rgba(251,191,36,0.08)',
                     fill: true,
@@ -491,7 +524,7 @@ if (divGoalEl) {{
                 }},
                 {{
                     label: 'B — Optimal Flip',
-                    data: {series_b},
+                    data: {series_b_div},
                     borderColor: '#3fb950',
                     backgroundColor: 'rgba(63,185,80,0.10)',
                     fill: true,
@@ -501,7 +534,7 @@ if (divGoalEl) {{
                 }},
                 {{
                     label: 'Target ${target_line:,.0f}/mo',
-                    data: [{{x:0,y:{target_line}}},{{x:{max(int(a["months"] or 0), int(b["months"]) if b else 0)},y:{target_line}}}],
+                    data: [{{x:0,y:{target_line}}},{{x:{horizon_months},y:{target_line}}}],
                     borderColor: '#f85149',
                     borderWidth: 1.5,
                     borderDash: [5,5],
@@ -521,25 +554,76 @@ if (divGoalEl) {{
                         title: items => 'Year ' + (items[0].parsed.x / 12).toFixed(1),
                         label: item => item.dataset.label + ': $' + item.parsed.y.toLocaleString(undefined, {{maximumFractionDigits:0}}) + '/mo'
                     }}
-                }},
-                annotation: {{}}
+                }}
             }},
             scales: {{
                 x: {{
                     type: 'linear',
                     title: {{ display: true, text: 'Years', color: '#8b949e' }},
-                    ticks: {{
-                        color: '#484f58',
-                        callback: v => (v / 12).toFixed(0) + 'y'
-                    }},
+                    ticks: {{ color: '#484f58', callback: v => (v / 12).toFixed(0) + 'y' }},
                     grid: {{ color: '#21262d' }},
                 }},
                 y: {{
                     title: {{ display: true, text: 'Monthly Div Income (USD)', color: '#8b949e' }},
-                    ticks: {{
-                        color: '#484f58',
-                        callback: v => '$' + v.toLocaleString()
-                    }},
+                    ticks: {{ color: '#484f58', callback: v => '$' + v.toLocaleString() }},
+                    grid: {{ color: '#21262d' }},
+                }},
+            }},
+        }},
+    }});
+}}
+
+const totalAssetsEl = document.getElementById('totalAssetsChart');
+if (totalAssetsEl) {{
+    new Chart(totalAssetsEl.getContext('2d'), {{
+        type: 'line',
+        data: {{
+            datasets: [
+                {{
+                    label: 'A — Always {split_str} (growth keeps compounding)',
+                    data: {series_a_total},
+                    borderColor: '#fbbf24',
+                    backgroundColor: 'rgba(251,191,36,0.08)',
+                    fill: true,
+                    tension: 0.25,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                }},
+                {{
+                    label: 'B — Optimal Flip (rotated into div)',
+                    data: {series_b_total},
+                    borderColor: '#3fb950',
+                    backgroundColor: 'rgba(63,185,80,0.10)',
+                    fill: true,
+                    tension: 0.25,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                }}
+            ]
+        }},
+        options: {{
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {{ mode: 'index', intersect: false }},
+            plugins: {{
+                legend: {{ labels: {{ color: '#8b949e', font: {{ size: 12 }} }} }},
+                tooltip: {{
+                    callbacks: {{
+                        title: items => 'Year ' + (items[0].parsed.x / 12).toFixed(1),
+                        label: item => item.dataset.label.split(' (')[0] + ': $' + item.parsed.y.toLocaleString(undefined, {{maximumFractionDigits:0}})
+                    }}
+                }}
+            }},
+            scales: {{
+                x: {{
+                    type: 'linear',
+                    title: {{ display: true, text: 'Years', color: '#8b949e' }},
+                    ticks: {{ color: '#484f58', callback: v => (v / 12).toFixed(0) + 'y' }},
+                    grid: {{ color: '#21262d' }},
+                }},
+                y: {{
+                    title: {{ display: true, text: 'Total Assets (USD)', color: '#8b949e' }},
+                    ticks: {{ color: '#484f58', callback: v => '$' + (v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'k' : v) }},
                     grid: {{ color: '#21262d' }},
                 }},
             }},
