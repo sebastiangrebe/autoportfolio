@@ -1,5 +1,11 @@
 # autoportfolio
 
+> ⚠️ **Not financial advice. Highly experimental. Use at your own risk.**
+>
+> autoportfolio is a personal research project. It is **not** a registered investment advisor, broker, or financial product. Nothing it outputs constitutes investment advice, tax advice, or a recommendation to buy or sell any security. The author accepts **no liability** for any losses, missed gains, tax consequences, data errors, or other harm arising from using this software.
+>
+> The strategy logic is opinionated, the data sources can be wrong or delayed, the LLM can hallucinate, and the math has known approximations (FX history, dividend withholding, multi-currency cash). You are the only person responsible for your trades. Verify every number before acting on it. Do not deploy capital you cannot afford to lose.
+
 An autonomous portfolio management agent for [Claude Code](https://claude.com/claude-code). Set your strategy, go to sleep, wake up to a monitoring report. Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch) — but for personal investing instead of ML experiments.
 
 autoportfolio manages real money decisions: it validates tickers, discovers new opportunities via web research, tracks holdings and P&L across sessions, and generates a visual dashboard. It runs interactively when you want to trade, or autonomously on a schedule to monitor your positions overnight.
